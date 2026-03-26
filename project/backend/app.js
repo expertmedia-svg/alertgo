@@ -8,9 +8,12 @@ const path       = require('path');
 const cors       = require('cors');
 
 const db         = require('./db');
-const { AmiClient, startAgiServer, bindAmiEvents, nextDongle } = require('./asterisk');
+const calls      = require('./calls');
 const sms        = require('./sms');
 const retry      = require('./retry');
+const alertDetector = require('./alertDetector');
+const alertAggregator = require('./alertAggregator');
+const { AmiClient, startAgiServer, bindAmiEvents } = require('./asterisk');
 
 const PORT = parseInt(process.env.PORT) || 3000;
 const CALL_DELAY_MS = parseInt(process.env.CALL_DELAY_MS) || 3000;
@@ -23,9 +26,6 @@ const io     = new socketio.Server(server, { cors: { origin: '*' } });
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
-
-// ── AMI ───────────────────────────────────────────────────────
-const ami = new AmiClient();
 
 // ═════════════════════════════════════════════════════════════
 // ROUTES API
@@ -83,15 +83,15 @@ app.post('/api/alerts', async (req, res) => {
       db.updateCall(call.id, { status: 'CALLING', attempts: 1 });
 
       try {
-        await ami.originate({
+        await calls.originate({
           phone:     contact.phone,
           contactId: call.id,
           alertId:   alert.id,
           alertType: type,
-          dongle:    nextDongle()
+          message:   message
         });
       } catch (err) {
-        console.error(`[ALERT] Erreur originate ${contact.phone}: ${err.message}`);
+        console.error(`[ALERT] Erreur appel ${contact.phone}: ${err.message}`);
         db.updateCall(call.id, { status: 'FAILED' });
       }
 
@@ -143,12 +143,12 @@ app.post('/api/calls/:callId/retry', async (req, res) => {
 
   db.updateCall(call.id, { status: 'CALLING', attempts: (call.attempts || 0) + 1 });
 
-  await ami.originate({
+  await calls.originate({
     phone:     contact.phone,
     contactId: call.id,
     alertId:   call.alertId,
     alertType: call.alertType,
-    dongle:    nextDongle()
+    message:   db.getAlerts().find(a => a.id === call.alertId)?.message || 'Alerte'
   });
 
   res.json({ message: 'Rappel lancé', call: db.getCalls().find(c => c.id === call.id) });
@@ -156,10 +156,118 @@ app.post('/api/calls/:callId/retry', async (req, res) => {
 
 // ── SMS manuel ────────────────────────────────────────────────
 app.post('/api/sms', async (req, res) => {
-  const { phone, message, dongle } = req.body;
-  const result = await sms.sendSms({ phone, message, dongle });
+  const { phone, message } = req.body;
+  const result = await sms.sendSms({ phone, message });
   res.json(result);
 });
+// ══════════════════════════════════════════════════════════
+// SYSTÈME DE DÉTECTION D'ALERTES PAR SMS
+// ══════════════════════════════════════════════════════════
+
+// ── Recevoir et analyser un SMS (webhook Twilio ou injection manuelle) ──
+app.post('/api/sms/detect', async (req, res) => {
+  const { From, Body, zone } = req.body;
+  
+  if (!Body) return res.status(400).json({ error: 'Message requis' });
+
+  console.log(`[SMS_DETECTOR] Message reçu — De: ${From}, Zone: ${zone}, Texte: ${Body}`);
+
+  // 1. Classifier le message
+  const classification = alertDetector.classifyMessage(Body, zone);
+  console.log(`[SMS_DETECTOR] Classification: ${classification.type} (${(classification.confidence * 100).toFixed(0)}%)`);
+
+  // 2. Ajouter aux alertes agrégées
+  const aggregationResult = alertAggregator.addMessage(Body, zone || 'default', classification.type);
+  console.log(`[SMS_DETECTOR] Agrégation: ${aggregationResult.messageCount}/3 pour ${zone}`);
+
+  // 3. Si alerte auto déclenchée → lancer campagne
+  if (aggregationResult.triggered) {
+    console.log(`[SMS_DETECTOR] 🚨 ALERTE AUTO DÉCLENCHÉE — ${aggregationResult.zone}/${aggregationResult.type}`);
+    
+    const contacts = db.getContacts().filter(c => c.zone === zone);
+    
+    if (contacts.length > 0) {
+      // Créer une alerte automatique
+      const alert = db.createAlert({
+        type: `AUTO_${classification.type.toUpperCase()}`,
+        message: `Détection automatique: ${aggregationResult.messageCount} rapports de ${classification.type} à ${zone}`,
+        auto: true,
+        zone: zone
+      });
+
+      // Lancer les appels en arrière-plan
+      setImmediate(async () => {
+        for (const contact of contacts) {
+          const call = db.createCallRecord({
+            contactId: contact.id,
+            alertId: alert.id,
+            alertType: `AUTO_${classification.type.toUpperCase()}`
+          });
+
+          db.updateCall(call.id, { status: 'CALLING', attempts: 1 });
+
+          try {
+            await calls.originate({
+              phone: contact.phone,
+              contactId: call.id,
+              alertId: alert.id,
+              alertType: `AUTO_${classification.type.toUpperCase()}`,
+              message: alert.message
+            });
+          } catch (err) {
+            console.error(`[SMS_DETECTOR] Erreur appel: ${err.message}`);
+            db.updateCall(call.id, { status: 'FAILED' });
+          }
+
+          io.emit('stats_update', db.getStats(alert.id));
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      });
+
+      return res.status(200).json({
+        message: 'SMS analysé et alerte automatique déclenchée',
+        classification,
+        alert: alert,
+        contacts_notified: contacts.length
+      });
+    }
+  }
+
+  res.status(200).json({
+    message: 'SMS analysé et stocké',
+    classification,
+    aggregation: {
+      count: aggregationResult.messageCount,
+      threshold: aggregationResult.threshold,
+      threshold_reached: aggregationResult.threshold_reached
+    }
+  });
+});
+
+// ── Stats des alertes par zone ──────────────────────────────
+app.get('/api/sms/zones', (req, res) => {
+  const { zone } = req.query;
+  
+  if (zone) {
+    res.json(alertAggregator.getZoneStatus(zone));
+  } else {
+    res.json(alertAggregator.getAlertStats());
+  }
+});
+
+// ── Dashboard de détection (historique) ─────────────────────
+app.get('/api/sms/dashboard', (req, res) => {
+  const stats = alertAggregator.getAlertStats();
+  const allAlerts = db.getActiveAlerts();
+  
+  res.json({
+    detection_stats: stats,
+    active_alerts: allAlerts.filter(a => a.auto),
+    message: 'Dashboard de détection d\'alertes'
+  });
+});
+// ── Twilio TwiML pour appels ──────────────────────────────────
+// SUPPRIMÉ: Routes liées à Twilio TwiML (mode Asterisk AMI à la place)
 
 // ═════════════════════════════════════════════════════════════
 // SOCKET.IO temps réel
@@ -177,25 +285,46 @@ io.on('connection', (socket) => {
 // ═════════════════════════════════════════════════════════════
 async function main() {
   console.log('=== Plateforme d\'alerte communautaire ===');
+  console.log('[APP] Architecture: VPS (brain) + Local Asterisk');
 
-  // Démarrer le serveur AGI
-  startAgiServer(io);
-
-  // Connexion AMI
+  // Initialiser Asterisk AMI
+  const ami = new AmiClient();
+  
   try {
     await ami.connect();
-    bindAmiEvents(ami, io);
+    console.log('[APP] ✅ Asterisk AMI connecté');
+    
+    // Injecter AMI dans les modules
+    calls.setAmi(ami);
     sms.setAmi(ami);
     retry.init(ami, io);
-    console.log('[APP] AMI opérationnel');
+    
+    // Lancer le serveur AGI
+    startAgiServer(io);
+    
+    // Écouter les événements AMI
+    bindAmiEvents(ami, io);
+    
+    console.log('[APP] ✅ Systeme SMS/Calls initialisé via Asterisk');
   } catch (err) {
-    console.error('[APP] Impossible de se connecter à AMI:', err.message);
-    console.warn('[APP] Mode dégradé — les appels GSM seront désactivés');
+    console.error('[APP] ⚠️  Erreur connexion Asterisk:', err.message);
+    console.warn('[APP] Mode DÉGRADÉ — SMS/Calls désactivés');
+    console.warn('[APP] Détection SMS et API fonctionnent normalement');
+    console.warn('[APP] Pour activer: Assurez-vous Asterisk est en cours d\'exécution sur', 
+      process.env.AMI_HOST || '127.0.0.1', ':', process.env.AMI_PORT || 5038);
+    
+    // Initialiser sans AMI
+    calls.init();
+    sms.init();
+    retry.init(null, io);
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[APP] Serveur HTTP démarré → http://0.0.0.0:${PORT}`);
+    console.log(`[APP] ✅ Serveur HTTP démarré → http://0.0.0.0:${PORT}`);
     console.log('[APP] Dashboard → http://localhost:' + PORT);
+    console.log('[APP] API NLP pour détection SMS: POST /api/sms/detect');
+    console.log('[APP] Zone: POST /api/sms/zones');
+    console.log('[APP] Dashboard de détection: GET /api/sms/dashboard');
   });
 }
 

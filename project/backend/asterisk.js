@@ -123,6 +123,16 @@ class AmiClient extends events.EventEmitter {
       Async:    'true'
     });
   }
+
+  // Envoyer SMS via dongle GSM
+  sendSms({ phone, message, dongle }) {
+    return this._action({
+      Action:   'DongleSendSMS',
+      Device:   dongle || nextDongle(),
+      Number:   phone,
+      Message:  message.slice(0, 160)  // Limite SMS à 160 caractères
+    });
+  }
 }
 
 // ═════════════════════════════════════════════════════════════

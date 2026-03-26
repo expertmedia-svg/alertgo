@@ -1,52 +1,61 @@
 // ============================================================
-// sms.js — Envoi SMS via Asterisk chan_dongle (AMI SendText)
+// sms.js — Envoi SMS via Asterisk (version hybride)
 // ============================================================
 const { AmiClient } = require('./asterisk');
 
-let _ami = null;
+let ami = null;
 
-function setAmi(ami) {
-  _ami = ami;
+function init() {
+  // La connexion AMI sera établie par app.js lors du startup
+  console.log('[SMS] Module SMS initialisé (Asterisk)');
+  return true;
 }
 
-// Envoyer un SMS via un dongle spécifique
-async function sendSms({ phone, message, dongle = 'dongle0' }) {
-  if (!_ami || !_ami.connected) {
+// Récupère l'instance AMI (injectée par app.js)
+function setAmi(amiInstance) {
+  ami = amiInstance;
+}
+
+// Envoyer un SMS via dongle Asterisk
+async function sendSms({ phone, message }) {
+  if (!ami || !ami.connected) {
     console.error('[SMS] AMI non connecté');
-    return { success: false, error: 'AMI non connecté' };
+    return { success: false, error: 'Asterisk non connecté' };
   }
 
-  // chan_dongle utilise l'action DongleSendSMS
-  const result = await _ami._action({
-    Action:  'DongleSendSMS',
-    Device:  dongle,
-    Number:  phone,
-    Message: message.slice(0, 160)  // Limite SMS standard
-  });
+  try {
+    const result = await ami.sendSms({ 
+      phone, 
+      message: message.slice(0, 160)  // Limite SMS
+    });
 
-  const ok = result && result.Response === 'Success';
-  console.log(`[SMS] ${phone} via ${dongle} — ${ok ? 'OK' : 'ÉCHEC'}`);
-  return { success: ok, result };
+    if (result.Response === 'Success') {
+      console.log(`[SMS] ${phone} ✅`);
+      return { success: true, messageId: result.ActionID };
+    } else {
+      console.warn(`[SMS] ${phone} → Erreur Asterisk: ${result.Message}`);
+      return { success: false, error: result.Message };
+    }
+  } catch (err) {
+    console.error(`[SMS] Erreur ${phone}: ${err.message}`);
+    return { success: false, error: err.message };
+  }
 }
 
 // Envoyer SMS d'alerte à tous les contacts
 async function sendAlertSms(contacts, alertType, message) {
-  const DONGLES = (process.env.DONGLES || 'dongle0,dongle1').split(',');
   const results = [];
 
-  for (let i = 0; i < contacts.length; i++) {
-    const contact = contacts[i];
-    const dongle  = DONGLES[i % DONGLES.length];
+  for (const contact of contacts) {
     const smsText = `ALERTE [${alertType.toUpperCase()}]: ${message} — Appelez le 112 si urgence.`;
-
-    const res = await sendSms({ phone: contact.phone, message: smsText, dongle });
+    const res = await sendSms({ phone: contact.phone, message: smsText });
     results.push({ contactId: contact.id, phone: contact.phone, ...res });
-
-    // Pause entre envois pour éviter la saturation du modem
-    await new Promise(r => setTimeout(r, 500));
+    
+    // Pause entre envois (rate limiting: 1 SMS/100ms)
+    await new Promise(r => setTimeout(r, 100));
   }
 
   return results;
 }
 
-module.exports = { setAmi, sendSms, sendAlertSms };
+module.exports = { init, setAmi, sendSms, sendAlertSms };

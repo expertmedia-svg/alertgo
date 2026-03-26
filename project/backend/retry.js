@@ -1,10 +1,9 @@
 // ============================================================
 // retry.js — Rappels automatiques pour les non-répondants
 // ============================================================
-const db       = require('./db');
-const { nextDongle } = require('./asterisk');
+const db    = require('./db');
+const calls = require('./calls');
 
-let _ami = null;
 let _io  = null;
 let retryTimer = null;
 
@@ -13,7 +12,7 @@ const RETRY_INTERVAL   = parseInt(process.env.RETRY_INTERVAL_MS) || 5 * 60 * 100
 const CALL_DELAY_MS    = parseInt(process.env.CALL_DELAY_MS) || 3000; // 3s entre appels
 
 function init(ami, io) {
-  _ami = ami;
+  // ami n'est plus utilisé avec Twilio
   _io  = io;
 }
 
@@ -48,15 +47,15 @@ async function runRetry() {
     console.log(`[RETRY] Rappel tentative ${call.attempts + 1}/${MAX_ATTEMPTS} — ${contact.phone}`);
 
     try {
-      await _ami.originate({
+      await calls.originate({
         phone:      contact.phone,
-        contactId:  call.id,        // on réutilise le même call ID pour le tracking
+        contactId:  call.id,
         alertId:    call.alertId,
         alertType:  call.alertType,
-        dongle:     nextDongle()
+        message:    alert.message
       });
     } catch (err) {
-      console.error(`[RETRY] Erreur originate: ${err.message}`);
+      console.error(`[RETRY] Erreur appel: ${err.message}`);
       db.updateCall(call.id, { status: 'FAILED' });
     }
 

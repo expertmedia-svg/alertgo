@@ -1,0 +1,69 @@
+{
+  "contacts": [
+    {
+      "id": "mn7vn16f7s3k",
+      "name": "lion",
+      "phone": "+22656132017",
+      "lat": 11.12572,
+      "lng": -4.21343,
+      "zone": "sect 27",
+      "createdAt": "2026-03-26T19:40:09.783Z"
+    },
+    {
+      "id": "mn7vsztkn2pc",
+      "name": "Chef Djanet",
+      "phone": "+221771234567",
+      "lat": 24.2577,
+      "lng": 9.4953,
+      "zone": "djanet",
+      "createdAt": "2026-03-26T19:44:47.960Z"
+    }
+  ],
+  "calls": [
+    {
+      "id": "mn7vngg70wil",
+      "contactId": "mn7vn16f7s3k",
+      "alertId": "mn7vngg3988z",
+      "alertType": "feu",
+      "status": "CALLING",
+      "response": null,
+      "attempts": 1,
+      "createdAt": "2026-03-26T19:40:29.575Z",
+      "updatedAt": "2026-03-26T19:40:29.577Z"
+    },
+    {
+      "id": "mn7vskcmd3dw",
+      "contactId": "mn7vn16f7s3k",
+      "alertId": "mn7vskcf4g0i",
+      "alertType": "eau",
+      "status": "CALLING",
+      "response": null,
+      "attempts": 1,
+      "createdAt": "2026-03-26T19:44:27.910Z",
+      "updatedAt": "2026-03-26T19:44:27.912Z"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "mn7vm6qwwzju",
+      "type": "feu",
+      "message": "feu",
+      "createdAt": "2026-03-26T19:39:30.344Z",
+      "active": true
+    },
+    {
+      "id": "mn7vngg3988z",
+      "type": "feu",
+      "message": "feu",
+      "createdAt": "2026-03-26T19:40:29.571Z",
+      "active": true
+    },
+    {
+      "id": "mn7vskcf4g0i",
+      "type": "eau",
+      "message": "innondation",
+      "createdAt": "2026-03-26T19:44:27.903Z",
+      "active": true
+    }
+  ]
+}
