@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🚨 Plateforme d'Alerte Communautaire</title>
+
+  <!-- Leaflet CSS offline (copier dans frontend/leaflet/) -->
+  <!-- En ligne pour test rapide — remplacer par chemins locaux en prod -->
+  <link rel="stylesheet" href="leaflet/leaflet.css" 
+        onerror="this.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'">
+
+  <style>
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --green:    #3fb950;
+      --red:      #f85149;
+      --yellow:   #d29922;
+      --blue:     #388bfd;
+      --orange:   #db6d28;
+      --purple:   #8b5cf6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.1rem; display: flex; align-items: center; gap: 8px; }
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--red); display: inline-block;
+      animation: blink 1s infinite;
+    }
+    .status-dot.connected { background: var(--green); animation: none; }
+    @keyframes blink { 50% { opacity: 0.3; } }
+
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .alert-type-badge {
+      padding: 3px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 600;
+      background: var(--red); color: #fff; display: none;
+    }
+    .alert-type-badge.visible { display: inline-block; }
+
+    /* ── LAYOUT ── */
+    .main {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      grid-template-rows: 1fr;
+      flex: 1; overflow: hidden;
+    }
+
+    /* ── PANNEAU GAUCHE ── */
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .tabs {
+      display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .tab {
+      flex: 1; padding: 10px; cursor: pointer;
+      text-align: center; font-size: 0.8rem; color: var(--muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+    .tab-content { display: none; flex: 1; overflow-y: auto; }
+    .tab-content.active { display: flex; flex-direction: column; }
+
+    /* ── STATS ── */
+    .stats-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 8px; padding: 12px;
+    }
+    .stat-card {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px; text-align: center;
+    }
+    .stat-card .val { font-size: 1.8rem; font-weight: 700; line-height: 1; }
+    .stat-card .lbl { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+    .stat-card.green .val { color: var(--green); }
+    .stat-card.red   .val { color: var(--red); }
+    .stat-card.yellow .val { color: var(--yellow); }
+    .stat-card.blue  .val { color: var(--blue); }
+    .stat-card.orange .val { color: var(--orange); }
+    .stat-card.purple .val { color: var(--purple); }
+
+    /* Barres IVR */
+    .ivr-section { padding: 0 12px 12px; }
+    .ivr-section h3 { font-size: 0.8rem; color: var(--muted); margin-bottom: 8px; }
+    .ivr-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .ivr-bar-label { width: 60px; font-size: 0.75rem; }
+    .ivr-bar-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+    .ivr-bar-fill  { height: 100%; border-radius: 4px; transition: width 0.5s; }
+    .ivr-bar-count { width: 28px; font-size: 0.75rem; text-align: right; color: var(--muted); }
+
+    /* ── TABLEAU DES APPELS ── */
+    .calls-list { padding: 8px; flex: 1; overflow-y: auto; }
+    .call-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px; border-radius: 6px;
+      border: 1px solid var(--border); margin-bottom: 4px;
+      font-size: 0.78rem; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .call-row:hover { background: var(--bg); }
+    .call-status {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .call-info { flex: 1; overflow: hidden; }
+    .call-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .call-phone { color: var(--muted); font-size: 0.72rem; }
+    .call-badge {
+      font-size: 0.65rem; padding: 2px 6px; border-radius: 10px;
+      font-weight: 600; flex-shrink: 0;
+    }
+    .retry-btn {
+      font-size: 0.65rem; padding: 2px 6px; border-radius: 4px;
+      background: var(--blue); color: #fff; border: none; cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    /* ── FORMULAIRE ALERTE ── */
+    .form-section { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .form-section h3 { font-size: 0.85rem; color: var(--muted); }
+    .form-section label { font-size: 0.78rem; color: var(--muted); display: block; margin-bottom: 4px; }
+    .form-section input,
+    .form-section select,
+    .form-section textarea {
+      width: 100%; padding: 8px 10px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 0.82rem;
+      outline: none;
+    }
+    .form-section textarea { height: 60px; resize: none; }
+    .form-section input:focus,
+    .form-section select:focus,
+    .form-section textarea:focus { border-color: var(--blue); }
+    .btn {
+      padding: 9px 16px; border-radius: 6px; border: none; cursor: pointer;
+      font-weight: 600; font-size: 0.82rem; transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-red    { background: var(--red);    color: #fff; width: 100%; }
+    .btn-green  { background: var(--green);  color: #000; width: 100%; }
+    .btn-blue   { background: var(--blue);   color: #fff; width: 100%; }
+    .btn-orange { background: var(--orange); color: #fff; width: 100%; }
+    .btn-small  { padding: 6px 12px; font-size: 0.75rem; width: auto; }
+    .checkbox-row { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; }
+
+    /* ── CARTE ── */
+    .map-container { position: relative; flex: 1; }
+    #map { width: 100%; height: 100%; }
+    .map-legend {
+      position: absolute; top: 10px; right: 10px; z-index: 1000;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px; font-size: 0.75rem;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .legend-dot  { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 18px; font-size: 0.82rem;
+      z-index: 9999; transform: translateY(80px); opacity: 0;
+      transition: all 0.3s; pointer-events: none;
+    }
+    #toast.show { transform: translateY(0); opacity: 1; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <h1>
+    <span id="statusDot" class="status-dot"></span>
+    🚨 Alerte Communautaire
+  </h1>
+  <div class="header-right">
+    <span id="alertBadge" class="alert-type-badge"></span>
+    <span id="clockEl" style="font-size:0.8rem;color:var(--muted)"></span>
+  </div>
+</header>
+
+<!-- ── MAIN ── -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('tab-stats')">📊 Stats</div>
+      <div class="tab" onclick="showTab('tab-calls')">📞 Appels</div>
+      <div class="tab" onclick="showTab('tab-alert')">🔴 Alerte</div>
+      <div class="tab" onclick="showTab('tab-contact')">👤 Contact</div>
+    </div>
+
+    <!-- TAB STATS -->
+    <div id="tab-stats" class="tab-content active">
+      <div class="stats-grid">
+        <div class="stat-card blue">
+          <div class="val" id="st-total">0</div>
+          <div class="lbl">Total appels</div>
+        </div>
+        <div class="stat-card green">
+          <div class="val" id="st-answered">0</div>
+          <div class="lbl">Décrochés</div>
+        </div>
+        <div class="stat-card yellow">
+          <div class="val" id="st-busy">0</div>
+          <div class="lbl">Occupé</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="val" id="st-noanswer">0</div>
+          <div class="lbl">Non répondu</div>
+        </div>
+        <div class="stat-card red">
+          <div class="val" id="st-failed">0</div>
+          <div class="lbl">Échoué</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="val" id="st-pending">0</div>
+          <div class="lbl">En cours</div>
+        </div>
+      </div>
+
+      <div class="ivr-section">
+        <h3>Réponses IVR</h3>
+        <div class="ivr-bar">
+          <span class="ivr-bar-label">Touche 1</span>
+          <div class="ivr-bar-track"><div class="ivr-bar-fill" id="ivr1-fill" style="width:0%;background:#3fb950"></div></div>
+          <span class="ivr-bar-count" id="ivr1-cnt">0</span>
+        </div>
+        <div class="ivr-bar">
+          <span class="ivr-bar-label">Touche 2</span>
+          <div class="ivr-bar-track"><div class="ivr-bar-fill" id="ivr2-fill" style="width:0%;background:#d29922"></div></div>
+          <span class="ivr-bar-count" id="ivr2-cnt">0</span>
+        </div>
+        <div class="ivr-bar">
+          <span class="ivr-bar-label">Touche 3</span>
+          <div class="ivr-bar-track"><div class="ivr-bar-fill" id="ivr3-fill" style="width:0%;background:#388bfd"></div></div>
+          <span class="ivr-bar-count" id="ivr3-cnt">0</span>
+        </div>
+        <div class="ivr-bar">
+          <span class="ivr-bar-label">Pas de rép.</span>
+          <div class="ivr-bar-track"><div class="ivr-bar-fill" id="ivr0-fill" style="width:0%;background:#8b949e"></div></div>
+          <span class="ivr-bar-count" id="ivr0-cnt">0</span>
+        </div>
+      </div>
+
+      <div style="padding:0 12px 12px;">
+        <button class="btn btn-orange" onclick="triggerRetry()">🔄 Lancer rappels maintenant</button>
+      </div>
+    </div>
+
+    <!-- TAB APPELS -->
+    <div id="tab-calls" class="tab-content">
+      <div style="padding:8px;display:flex;gap:6px;flex-shrink:0;">
+        <select id="filterStatus" onchange="renderCallsList()" style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:0.78rem;">
+          <option value="">Tous les statuts</option>
+          <option value="ANSWERED">Décroché</option>
+          <option value="BUSY">Occupé</option>
+          <option value="NOANSWER">Non répondu</option>
+          <option value="FAILED">Échoué</option>
+          <option value="PENDING">En attente</option>
+        </select>
+      </div>
+      <div id="callsList" class="calls-list"></div>
+    </div>
+
+    <!-- TAB ALERTE -->
+    <div id="tab-alert" class="tab-content">
+      <div class="form-section">
+        <h3>🔴 Déclencher une alerte</h3>
+        <div>
+          <label>Type d'alerte</label>
+          <select id="alertType">
+            <option value="feu">🔥 Incendie</option>
+            <option value="eau">🌊 Inondation</option>
+            <option value="communaute">📢 Communauté</option>
+          </select>
+        </div>
+        <div>
+          <label>Message SMS (si activé)</label>
+          <textarea id="alertMessage" placeholder="Ex: Incendie au marché central. Évacuez immédiatement."></textarea>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="sendSms">
+          <label for="sendSms">Envoyer SMS en parallèle</label>
+        </div>
+        <button class="btn btn-red" onclick="triggerAlert()">🚨 DÉCLENCHER L'ALERTE</button>
+
+        <hr style="border-color:var(--border);margin:4px 0">
+
+        <h3>📱 SMS manuel</h3>
+        <div>
+          <label>Numéro</label>
+          <input type="tel" id="smsPhone" placeholder="+22676000000">
+        </div>
+        <div>
+          <label>Message</label>
+          <textarea id="smsMsg" placeholder="Votre message..."></textarea>
+        </div>
+        <button class="btn btn-blue" onclick="sendManualSms()">📤 Envoyer SMS</button>
+      </div>
+    </div>
+
+    <!-- TAB CONTACT -->
+    <div id="tab-contact" class="tab-content">
+      <div class="form-section">
+        <h3>➕ Ajouter un contact</h3>
+        <div>
+          <label>Nom complet</label>
+          <input type="text" id="cName" placeholder="Amadou Traoré">
+        </div>
+        <div>
+          <label>Téléphone</label>
+          <input type="tel" id="cPhone" placeholder="+22676000000">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label>Latitude</label>
+            <input type="number" id="cLat" placeholder="11.1771" step="0.0001">
+          </div>
+          <div>
+            <label>Longitude</label>
+            <input type="number" id="cLng" placeholder="-4.2979" step="0.0001">
+          </div>
+        </div>
+        <div>
+          <label>Zone / Quartier</label>
+          <input type="text" id="cZone" placeholder="Secteur 10">
+        </div>
+        <button class="btn btn-green" onclick="addContact()">✅ Ajouter contact</button>
+        <div id="mapPickHint" style="font-size:0.72rem;color:var(--muted);margin-top:4px;">
+          💡 Cliquez sur la carte pour remplir lat/lng automatiquement
+        </div>
+
+        <hr style="border-color:var(--border);margin:4px 0">
+        <h3>📋 Import bulk (JSON)</h3>
+        <textarea id="bulkJson" placeholder='[{"name":"Ali","phone":"+226...","lat":11.17,"lng":-4.29,"zone":"Centre"}]' style="height:80px"></textarea>
+        <button class="btn btn-blue" onclick="bulkImport()">📥 Importer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAP -->
+  <div class="map-container">
+    <div id="map"></div>
+    <div class="map-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> Décroché</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#d29922"></div> Occupé</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f85149"></div> Non répondu</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#8b949e"></div> En attente</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#388bfd"></div> Contact</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Leaflet JS offline (fallback CDN) -->
+<script src="leaflet/leaflet.js"
+        onerror="var s=document.createElement('script');s.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';document.head.appendChild(s)">
+</script>
+<!-- Socket.IO -->
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// app.js inliné — Dashboard temps réel
+// ═══════════════════════════════════════════════════════════
+const API  = '';   // même origine
+let callsData = [];
+let mapMarkers = {};
+
+// ── Horloge ──
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('clockEl').textContent =
+    d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR');
+}, 1000);
+
+// ── Tabs ──
+function showTab(id) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  const idx = ['tab-stats','tab-calls','tab-alert','tab-contact'].indexOf(id);
+  document.querySelectorAll('.tab')[idx].classList.add('active');
+}
+
+// ── Toast ──
+function toast(msg, color = '#388bfd') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = color;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ── MAP ──
+let map, mapPickMode = false;
+window.addEventListener('load', () => {
+  // Centré sur Bobo-Dioulasso
+  map = L.map('map', { zoomControl: true }).setView([11.1771, -4.2979], 13);
+
+  // Tuiles offline (OSM téléchargées localement) ou fallback CDN
+  L.tileLayer('tiles/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+    maxZoom: 18,
+    errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  }).addTo(map);
+
+  // Fallback tuiles en ligne si hors ligne échoue
+  const fallbackLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 18
+  });
+
+  map.on('tileerror', () => {
+    if (!map.hasLayer(fallbackLayer)) fallbackLayer.addTo(map);
+  });
+
+  // Clic carte pour saisir lat/lng contact
+  map.on('click', (e) => {
+    document.getElementById('cLat').value = e.latlng.lat.toFixed(5);
+    document.getElementById('cLng').value = e.latlng.lng.toFixed(5);
+    toast('📍 Position sélectionnée');
+  });
+
+  loadInitialData();
+  connectSocket();
+});
+
+function statusColor(status) {
+  const colors = {
+    ANSWERED: '#3fb950', BUSY: '#d29922',
+    NOANSWER: '#f85149', FAILED: '#f85149',
+    PENDING:  '#8b949e', CALLING: '#8b5cf6'
+  };
+  return colors[status] || '#8b949e';
+}
+
+function updateMapMarkers(data) {
+  // Supprimer anciens marqueurs d'appels
+  Object.values(mapMarkers).forEach(m => m.remove());
+  mapMarkers = {};
+
+  data.forEach(item => {
+    if (!item.contact || !item.contact.lat) return;
+    const { lat, lng } = item.contact;
+    const color = statusColor(item.status);
+    const resp  = item.response ? ` — IVR:${item.response}` : '';
+
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 4px rgba(0,0,0,.5)"></div>`,
+      iconSize: [14,14], iconAnchor: [7,7]
+    });
+
+    const marker = L.marker([lat, lng], { icon })
+      .addTo(map)
+      .bindPopup(`<b>${item.contact.name}</b><br>${item.contact.phone}<br>
+        Statut: <b style="color:${color}">${item.status}</b>${resp}<br>
+        Zone: ${item.contact.zone || '-'}<br>
+        Tentatives: ${item.attempts || 0}`);
+
+    mapMarkers[item.id] = marker;
+  });
+}
+
+// ── STATS ──
+function updateStats(s) {
+  document.getElementById('st-total').textContent    = s.total    || 0;
+  document.getElementById('st-answered').textContent = s.answered || 0;
+  document.getElementById('st-busy').textContent     = s.busy     || 0;
+  document.getElementById('st-noanswer').textContent = s.noanswer || 0;
+  document.getElementById('st-failed').textContent   = s.failed   || 0;
+  document.getElementById('st-pending').textContent  = s.pending  || 0;
+
+  const r = s.responses || {};
+  const total = s.total || 1;
+  ['1','2','3','0'].forEach(k => {
+    const cnt = r[k] || 0;
+    document.getElementById(`ivr${k}-fill`).style.width = Math.round(cnt / total * 100) + '%';
+    document.getElementById(`ivr${k}-cnt`).textContent   = cnt;
+  });
+}
+
+// ── LISTE APPELS ──
+function renderCallsList() {
+  const filter = document.getElementById('filterStatus').value;
+  const list   = document.getElementById('callsList');
+  const data   = filter ? callsData.filter(c => c.status === filter) : callsData;
+
+  list.innerHTML = data.length === 0
+    ? '<div style="padding:16px;text-align:center;color:var(--muted);font-size:0.8rem">Aucun appel</div>'
+    : data.map(c => {
+        const contact = c.contact || {};
+        const color   = statusColor(c.status);
+        const needRetry = ['BUSY','NOANSWER','FAILED'].includes(c.status);
+        return `<div class="call-row" onclick="flyToContact('${c.id}')">
+          <div class="call-status" style="background:${color}"></div>
+          <div class="call-info">
+            <div class="call-name">${contact.name || c.contactId}</div>
+            <div class="call-phone">${contact.phone || ''} ${c.response ? '· IVR:'+c.response : ''}</div>
+          </div>
+          <span class="call-badge" style="background:${color}22;color:${color}">${c.status}</span>
+          ${needRetry ? `<button class="retry-btn" onclick="event.stopPropagation();retryCall('${c.id}')">↩</button>` : ''}
+        </div>`;
+      }).join('');
+}
+
+function flyToContact(callId) {
+  const item = callsData.find(c => c.id === callId);
+  if (!item || !item.contact || !item.contact.lat) return;
+  map.flyTo([item.contact.lat, item.contact.lng], 16);
+  mapMarkers[callId] && mapMarkers[callId].openPopup();
+}
+
+// ── SOCKET.IO ──
+function connectSocket() {
+  const socket = io();
+  const dot    = document.getElementById('statusDot');
+
+  socket.on('connect',    () => { dot.classList.add('connected');    toast('🟢 Connecté au serveur'); });
+  socket.on('disconnect', () => { dot.classList.remove('connected'); toast('🔴 Déconnecté', '#f85149'); });
+
+  socket.on('stats_update', (s) => updateStats(s));
+
+  socket.on('call_update', (data) => {
+    callsData = data;
+    updateMapMarkers(data);
+    renderCallsList();
+  });
+}
+
+// ── CHARGEMENT INITIAL ──
+async function loadInitialData() {
+  try {
+    const [statsRes, mapRes] = await Promise.all([
+      fetch(`${API}/api/stats`).then(r => r.json()),
+      fetch(`${API}/api/map`).then(r => r.json())
+    ]);
+    updateStats(statsRes);
+    callsData = mapRes;
+    updateMapMarkers(mapRes);
+    renderCallsList();
+
+    // Contacts sans appels sur la carte
+    const contacts = await fetch(`${API}/api/contacts`).then(r => r.json());
+    contacts.forEach(c => {
+      if (!c.lat) return;
+      const icon = L.divIcon({
+        className:'',
+        html:`<div style="width:10px;height:10px;border-radius:50%;background:#388bfd;border:2px solid #fff"></div>`,
+        iconSize:[10,10], iconAnchor:[5,5]
+      });
+      L.marker([c.lat, c.lng], { icon }).addTo(map)
+        .bindPopup(`<b>${c.name}</b><br>${c.phone}<br>Zone: ${c.zone||'-'}`);
+    });
+  } catch(e) {
+    toast('⚠️ Impossible de charger les données', '#d29922');
+  }
+}
+
+// ── ACTIONS ──
+async function triggerAlert() {
+  const type    = document.getElementById('alertType').value;
+  const message = document.getElementById('alertMessage').value.trim() || `Alerte ${type}`;
+  const sendSmsAlso = document.getElementById('sendSms').checked;
+
+  if (!confirm(`⚠️ Déclencher une alerte [${type.toUpperCase()}] vers TOUS les contacts ?`)) return;
+
+  try {
+    const res = await fetch(`${API}/api/alerts`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ type, message, sendSmsAlso })
+    }).then(r => r.json());
+
+    document.getElementById('alertBadge').textContent = type.toUpperCase();
+    document.getElementById('alertBadge').classList.add('visible');
+    toast(`🚨 Alerte lancée — ${res.total} contacts`, '#f85149');
+    showTab('tab-stats');
+  } catch(e) { toast('Erreur réseau', '#f85149'); }
+}
+
+async function sendManualSms() {
+  const phone   = document.getElementById('smsPhone').value.trim();
+  const message = document.getElementById('smsMsg').value.trim();
+  if (!phone || !message) return toast('Numéro et message requis', '#d29922');
+
+  const res = await fetch(`${API}/api/sms`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ phone, message })
+  }).then(r => r.json());
+
+  toast(res.success ? '✅ SMS envoyé' : '❌ Échec SMS', res.success ? '#3fb950' : '#f85149');
+}
+
+async function addContact() {
+  const name  = document.getElementById('cName').value.trim();
+  const phone = document.getElementById('cPhone').value.trim();
+  const lat   = parseFloat(document.getElementById('cLat').value);
+  const lng   = parseFloat(document.getElementById('cLng').value);
+  const zone  = document.getElementById('cZone').value.trim();
+
+  if (!name || !phone || isNaN(lat) || isNaN(lng)) return toast('Tous les champs requis', '#d29922');
+
+  const c = await fetch(`${API}/api/contacts`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name, phone, lat, lng, zone })
+  }).then(r => r.json());
+
+  toast(`✅ Contact ajouté: ${c.name}`, '#3fb950');
+  ['cName','cPhone','cLat','cLng','cZone'].forEach(id => document.getElementById(id).value = '');
+
+  // Ajouter marqueur bleu sur la carte
+  const icon = L.divIcon({
+    className:'',
+    html:`<div style="width:10px;height:10px;border-radius:50%;background:#388bfd;border:2px solid #fff"></div>`,
+    iconSize:[10,10], iconAnchor:[5,5]
+  });
+  L.marker([lat, lng], { icon }).addTo(map)
+    .bindPopup(`<b>${c.name}</b><br>${c.phone}<br>Zone: ${zone||'-'}`);
+}
+
+async function bulkImport() {
+  try {
+    const contacts = JSON.parse(document.getElementById('bulkJson').value);
+    const res = await fetch(`${API}/api/contacts/bulk`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ contacts })
+    }).then(r => r.json());
+    toast(`✅ ${res.created} contacts importés`, '#3fb950');
+    document.getElementById('bulkJson').value = '';
+    loadInitialData();
+  } catch(e) { toast('JSON invalide', '#f85149'); }
+}
+
+async function triggerRetry() {
+  await fetch(`${API}/api/retry`, { method:'POST' });
+  toast('🔄 Rappels lancés', '#8b5cf6');
+}
+
+async function retryCall(callId) {
+  await fetch(`${API}/api/calls/${callId}/retry`, { method:'POST' });
+  toast('↩ Rappel lancé', '#388bfd');
+}
+</script>
+</body>
+</html>

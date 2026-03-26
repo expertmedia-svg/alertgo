@@ -1,0 +1,12 @@
+{
+  "contacts": [
+    { "name": "Amadou Traoré",      "phone": "+22676100001", "lat": 11.1771, "lng": -4.2979, "zone": "Secteur 10" },
+    { "name": "Fatoumata Coulibaly","phone": "+22676100002", "lat": 11.1800, "lng": -4.2950, "zone": "Koko" },
+    { "name": "Ibrahim Sawadogo",   "phone": "+22670100003", "lat": 11.1745, "lng": -4.3020, "zone": "Secteur 22" },
+    { "name": "Mariama Diallo",     "phone": "+22666100004", "lat": 11.1820, "lng": -4.2880, "zone": "Secteur 5" },
+    { "name": "Oumar Barro",        "phone": "+22601100005", "lat": 11.1760, "lng": -4.3100, "zone": "Niénéta" },
+    { "name": "Aïssatou Koné",      "phone": "+22676100006", "lat": 11.1835, "lng": -4.2960, "zone": "Accart-Ville" },
+    { "name": "Seydou Traoré",      "phone": "+22670100007", "lat": 11.1690, "lng": -4.3050, "zone": "Sarfalao" },
+    { "name": "Rokiatou Sanou",     "phone": "+22666100008", "lat": 11.1750, "lng": -4.2840, "zone": "Dioulassoba" }
+  ]
+}
