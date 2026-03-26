@@ -1,6 +1,7 @@
 // ============================================================
 // app.js — Serveur principal Express + Socket.IO
 // ============================================================
+require('dotenv').config();
 const express    = require('express');
 const http       = require('http');
 const socketio   = require('socket.io');
